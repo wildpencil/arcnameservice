@@ -65,7 +65,7 @@
     Need testnet funds? <a href="https://faucet.circle.com" target="_blank">faucet.circle.com</a>
   </p>
 <script>
-const REGISTRAR = "0x6d8FcfAf1992E22E106B359293Ae75b1D61fA0b8";
+const REGISTRAR = "0x326AEb1ce28552c27DC1046B98bB067aD6c2A327";
 const ARC_CHAIN_ID = 5042002;
 const ABI = [
   "function rentPrice(string name, uint256 duration) view returns (uint256)",
@@ -89,10 +89,7 @@ const walletAddr = document.getElementById('walletAddr');
 function showStatus(msg, type) { status.textContent = msg; status.className = 'status ' + type; }
 
 function disconnect() {
-  provider = null;
-  signer = null;
-  registrar = null;
-  connected = false;
+  provider = null; signer = null; registrar = null; connected = false;
   walletBar.className = 'wallet-bar hidden';
   walletAddr.textContent = '';
   connectBtn.textContent = 'Connect Wallet to Register';
@@ -106,34 +103,23 @@ function selectDuration(years) {
   document.getElementById('btn5').className = years === 5 ? 'duration-btn active' : 'duration-btn';
   const price = years === 1 ? '3 USDC' : '15 USDC';
   priceInfo.textContent = 'Total: ' + price;
-  if (connected) {
-    connectBtn.textContent = 'Register ' + currentName + '.arc — ' + price;
-  }
+  if (connected) connectBtn.textContent = 'Register ' + currentName + '.arc — ' + price;
 }
 
 async function checkName() {
   const name = nameInput.value.trim().toLowerCase();
   if (!name || name.length < 3) {
-    badge.style.display = 'none';
-    priceInfo.textContent = '';
-    durationRow.style.display = 'none';
-    connectBtn.style.display = 'none';
-    showStatus('Min 3 characters', 'err');
-    return;
+    badge.style.display = 'none'; priceInfo.textContent = '';
+    durationRow.style.display = 'none'; connectBtn.style.display = 'none';
+    showStatus('Min 3 characters', 'err'); return;
   }
-  if (!/^[a-z0-9-]+$/.test(name)) {
-    showStatus('Only lowercase letters, numbers, hyphens', 'err');
-    return;
-  }
+  if (!/^[a-z0-9-]+$/.test(name)) { showStatus('Only lowercase letters, numbers, hyphens', 'err'); return; }
   currentName = name;
   badge.style.display = 'block';
   badge.className = 'badge checking';
   badge.textContent = 'Checking ' + name + '.arc ...';
-  priceInfo.textContent = '';
-  durationRow.style.display = 'none';
-  connectBtn.style.display = 'none';
-  status.className = 'status';
-
+  priceInfo.textContent = ''; durationRow.style.display = 'none';
+  connectBtn.style.display = 'none'; status.className = 'status';
   try {
     const readProvider = new ethers.JsonRpcProvider(RPC);
     const readRegistrar = new ethers.Contract(REGISTRAR, ABI, readProvider);
@@ -148,9 +134,7 @@ async function checkName() {
     } else {
       badge.className = 'badge taken';
       badge.textContent = name + '.arc — Already Registered';
-      priceInfo.textContent = '';
-      durationRow.style.display = 'none';
-      connectBtn.style.display = 'none';
+      priceInfo.textContent = ''; durationRow.style.display = 'none'; connectBtn.style.display = 'none';
     }
   } catch(e) {
     badge.className = 'badge checking';
@@ -187,12 +171,9 @@ async function connect() {
     connectBtn.textContent = 'Register ' + currentName + '.arc — ' + price;
     connectBtn.onclick = register;
     showStatus('Wallet connected!', 'ok');
-
     eth.on('accountsChanged', (accounts) => {
-      if (accounts.length === 0) { disconnect(); }
-      else {
-        walletAddr.textContent = accounts[0].slice(0,6) + '...' + accounts[0].slice(-4);
-      }
+      if (accounts.length === 0) disconnect();
+      else walletAddr.textContent = accounts[0].slice(0,6) + '...' + accounts[0].slice(-4);
     });
   } catch(e) { showStatus('Error: ' + e.message, 'err'); }
 }
