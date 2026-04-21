@@ -15,7 +15,6 @@
     input:focus { border-color: #00ff88; }
     button { width: 100%; padding: 14px; background: #00ff88; color: #000; border: none; border-radius: 8px; font-size: 1rem; font-weight: bold; cursor: pointer; font-family: inherit; }
     button:hover { background: #00cc66; }
-    button:disabled { background: #333; color: #666; cursor: not-allowed; }
     .status { margin-top: 16px; padding: 12px; border-radius: 8px; font-size: 0.9rem; display: none; }
     .status.ok { background: #0a2a1a; border: 1px solid #00ff88; color: #00ff88; display: block; }
     .status.err { background: #2a0a0a; border: 1px solid #ff4444; color: #ff4444; display: block; }
@@ -55,7 +54,7 @@ nameInput.addEventListener('input', async () => {
   if (registrar) {
     try {
       const price = await registrar.rentPrice(name, 365*24*3600);
-      priceInfo.textContent = `Price: ${ethers.formatEther(price)} USDC / year`;
+      priceInfo.textContent = 'Price: ' + ethers.formatEther(price) + ' USDC / year';
     } catch(e) { priceInfo.textContent = 'Price unavailable'; }
   } else {
     priceInfo.textContent = name.length >= 5 ? '3 USDC/yr' : name.length === 4 ? '80 USDC/yr' : '320 USDC/yr';
@@ -64,8 +63,8 @@ nameInput.addEventListener('input', async () => {
 async function connect() {
   if (!window.ethereum) { showStatus('MetaMask not found!', 'err'); return; }
   try {
-    await window.ethereum.request({ method: 'eth_requestAccounts' });
     provider = new ethers.BrowserProvider(window.ethereum);
+    await provider.send("eth_requestAccounts", []);
     const network = await provider.getNetwork();
     if (Number(network.chainId) !== ARC_CHAIN_ID) {
       try {
@@ -95,7 +94,7 @@ async function register() {
     const tx = await registrar.register(name, await signer.getAddress(), duration, { value: price });
     showStatus('Waiting for confirmation...', 'info');
     await tx.wait();
-    showStatus('✅ ' + name + '.arc registered! TX: ' + tx.hash.slice(0,10) + '...', 'ok');
+    showStatus('Registered! TX: ' + tx.hash.slice(0,10) + '...', 'ok');
   } catch(e) { showStatus('Error: ' + (e.reason || e.message), 'err'); }
 }
 </script>
