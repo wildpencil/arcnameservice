@@ -46,8 +46,6 @@
     .status.ok { background: #0a2a1a; border: 1px solid #10b981; color: #10b981; display: block; }
     .status.err { background: #2a0a0a; border: 1px solid #ef4444; color: #ef4444; display: block; }
     .status.info { background: #1e1a3a; border: 1px solid #7c3aed; color: #a78bfa; display: block; }
-
-    /* MY NAMES MODAL */
     .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 100; align-items: center; justify-content: center; }
     .modal-overlay.show { display: flex; }
     .modal { background: #13103a; border: 1px solid #2d2060; border-radius: 16px; padding: 32px; width: 100%; max-width: 480px; max-height: 80vh; overflow-y: auto; position: relative; }
@@ -57,10 +55,9 @@
     .name-item { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: #0d0b1a; border: 1px solid #2d2060; border-radius: 10px; margin-bottom: 10px; }
     .name-item .name { font-weight: 700; color: #fff; font-size: 1rem; }
     .name-item .name span { color: #a78bfa; }
-    .name-item .expiry { font-size: 0.78rem; color: #6b7280; }
+    .name-item .expiry { font-size: 0.78rem; color: #6b7280; margin-top: 4px; }
     .loading-names { text-align: center; color: #6b7280; padding: 24px; }
     .no-names { text-align: center; color: #6b7280; padding: 24px; }
-
     footer { text-align: center; padding: 24px; color: #4b5563; font-size: 0.85rem; border-top: 1px solid #1e1a3a; }
     footer a { color: #7c3aed; text-decoration: none; }
     footer a:hover { color: #a78bfa; }
@@ -117,7 +114,6 @@
     <a href="https://x.com/0x_orwell" target="_blank">𝕏 @0x_orwell</a>
   </footer>
 
-  <!-- MY NAMES MODAL -->
   <div class="modal-overlay" id="modalOverlay" onclick="closeMyNames(event)">
     <div class="modal">
       <button class="modal-close" onclick="closeMyNames()">✕</button>
@@ -134,7 +130,6 @@ const ABI = [
   "function rentPrice(string name, uint256 duration) view returns (uint256)",
   "function register(string name, address owner, uint256 duration) payable returns (bytes32)",
   "function available(string name) view returns (bool)",
-  "function expiry(string name) view returns (uint256)",
   "event NameRegistered(string name, bytes32 indexed node, address indexed owner, uint256 expires)"
 ];
 
@@ -242,10 +237,7 @@ async function connect() {
     showStatus('Wallet connected!', 'ok');
     eth.on('accountsChanged', (accounts) => {
       if (accounts.length === 0) disconnect();
-      else {
-        myAddress = accounts[0];
-        walletAddr.textContent = accounts[0].slice(0,6) + '...' + accounts[0].slice(-4);
-      }
+      else { myAddress = accounts[0]; walletAddr.textContent = accounts[0].slice(0,6) + '...' + accounts[0].slice(-4); }
     });
   } catch(e) { showStatus('Error: ' + e.message, 'err'); }
 }
@@ -275,8 +267,10 @@ async function openMyNames() {
   try {
     const readProvider = new ethers.JsonRpcProvider(RPC);
     const readRegistrar = new ethers.Contract(REGISTRAR, ABI, readProvider);
+    const latest = await readProvider.getBlockNumber();
+    const fromBlock = Math.max(0, latest - 500000);
     const filter = readRegistrar.filters.NameRegistered(null, null, myAddress);
-    const events = await readRegistrar.queryFilter(filter, 0, 'latest');
+    const events = await readRegistrar.queryFilter(filter, fromBlock, 'latest');
     if (events.length === 0) {
       document.getElementById('namesList').innerHTML = '<div class="no-names">No .arc names found for this wallet.</div>';
       return;
@@ -288,14 +282,14 @@ async function openMyNames() {
       const expires = Number(e.args[3]);
       const expiryDate = new Date(expires * 1000).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
       const expired = expires < now;
-      html += '<div class="name-item">';
-      html += '<div><div class="name">' + name + '<span>.arc</span></div>';
-      html += '<div class="expiry">' + (expired ? 'Expired: ' : 'Expires: ') + expiryDate + '</div></div>';
-      html += '</div>';
+      html += '<div class="name-item"><div>';
+      html += '<div class="name">' + name + '<span>.arc</span></div>';
+      html += '<div class="expiry">' + (expired ? 'Expired: ' : 'Expires: ') + expiryDate + '</div>';
+      html += '</div></div>';
     }
     document.getElementById('namesList').innerHTML = html;
   } catch(e) {
-    document.getElementById('namesList').innerHTML = '<div class="no-names">Error loading names: ' + e.message + '</div>';
+    document.getElementById('namesList').innerHTML = '<div class="no-names">Error: ' + e.message + '</div>';
   }
 }
 
