@@ -18,11 +18,14 @@
     input:focus { border-color: #00ff88; }
     button { width: 100%; padding: 14px; background: #00ff88; color: #000; border: none; border-radius: 8px; font-size: 1rem; font-weight: bold; cursor: pointer; font-family: inherit; }
     button:hover { background: #00cc66; }
+    .duration-row { display: flex; gap: 8px; margin-bottom: 12px; }
+    .duration-btn { flex: 1; padding: 10px; background: #0a0a0a; border: 1px solid #333; border-radius: 8px; color: #888; font-size: 0.9rem; cursor: pointer; font-family: inherit; }
+    .duration-btn.active { border-color: #00ff88; color: #00ff88; background: #0a2a1a; }
     .badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 0.85rem; font-weight: bold; margin-bottom: 12px; }
     .badge.available { background: #0a2a1a; border: 1px solid #00ff88; color: #00ff88; }
     .badge.taken { background: #2a0a0a; border: 1px solid #ff4444; color: #ff4444; }
     .badge.checking { background: #0a1a2a; border: 1px solid #00aaff; color: #00aaff; }
-    .price { color: #888; font-size: 0.85rem; margin-bottom: 12px; }
+    .price { color: #00ff88; font-size: 1rem; font-weight: bold; margin-bottom: 12px; }
     .status { margin-top: 16px; padding: 12px; border-radius: 8px; font-size: 0.9rem; display: none; }
     .status.ok { background: #0a2a1a; border: 1px solid #00ff88; color: #00ff88; display: block; }
     .status.err { background: #2a0a0a; border: 1px solid #ff4444; color: #ff4444; display: block; }
@@ -39,6 +42,12 @@
       <button onclick="checkName()">Check</button>
     </div>
     <div id="badge" style="display:none"></div>
+    <div id="durationRow" style="display:none; margin-top:12px;">
+      <div class="duration-row">
+        <button class="duration-btn active" id="btn1" onclick="selectDuration(1)">1 Year — 3 USDC</button>
+        <button class="duration-btn" id="btn5" onclick="selectDuration(5)">5 Years — 15 USDC</button>
+      </div>
+    </div>
     <div class="price" id="priceInfo"></div>
     <button id="connectBtn" onclick="connect()" style="display:none">Connect Wallet to Register</button>
     <div class="status" id="status"></div>
@@ -56,26 +65,49 @@ const ABI = [
 ];
 const RPC = "https://rpc.testnet.arc.network";
 let provider, signer, registrar, connected = false;
+let selectedYears = 1;
+let currentName = '';
+
 const nameInput = document.getElementById('nameInput');
 const priceInfo = document.getElementById('priceInfo');
 const connectBtn = document.getElementById('connectBtn');
 const status = document.getElementById('status');
 const badge = document.getElementById('badge');
+const durationRow = document.getElementById('durationRow');
 
 function showStatus(msg, type) { status.textContent = msg; status.className = 'status ' + type; }
 
+function selectDuration(years) {
+  selectedYears = years;
+  document.getElementById('btn1').className = years === 1 ? 'duration-btn active' : 'duration-btn';
+  document.getElementById('btn5').className = years === 5 ? 'duration-btn active' : 'duration-btn';
+  const price = years === 1 ? '3 USDC' : '15 USDC';
+  priceInfo.textContent = 'Total: ' + price;
+  if (connected) {
+    connectBtn.textContent = 'Register ' + currentName + '.arc — ' + price;
+  }
+}
+
 async function checkName() {
   const name = nameInput.value.trim().toLowerCase();
-  if (!name || name.length < 3) { 
+  if (!name || name.length < 3) {
     badge.style.display = 'none';
     priceInfo.textContent = '';
-    showStatus('Min 3 characters', 'err'); 
-    return; 
+    durationRow.style.display = 'none';
+    connectBtn.style.display = 'none';
+    showStatus('Min 3 characters', 'err');
+    return;
   }
+  if (!/^[a-z0-9-]+$/.test(name)) {
+    showStatus('Only lowercase letters, numbers, hyphens', 'err');
+    return;
+  }
+  currentName = name;
   badge.style.display = 'block';
   badge.className = 'badge checking';
   badge.textContent = 'Checking ' + name + '.arc ...';
   priceInfo.textContent = '';
+  durationRow.style.display = 'none';
   connectBtn.style.display = 'none';
   status.className = 'status';
 
@@ -86,14 +118,15 @@ async function checkName() {
     if (isAvailable) {
       badge.className = 'badge available';
       badge.textContent = name + '.arc — Available';
-      const price = await readRegistrar.rentPrice(name, 365*24*3600);
-      priceInfo.textContent = 'Price: ' + ethers.formatEther(price) + ' USDC / year';
+      durationRow.style.display = 'block';
+      selectDuration(selectedYears);
       connectBtn.style.display = 'block';
       connectBtn.textContent = connected ? 'Register ' + name + '.arc' : 'Connect Wallet to Register';
     } else {
       badge.className = 'badge taken';
       badge.textContent = name + '.arc — Already Registered';
       priceInfo.textContent = '';
+      durationRow.style.display = 'none';
       connectBtn.style.display = 'none';
     }
   } catch(e) {
@@ -124,8 +157,8 @@ async function connect() {
     signer = await provider.getSigner();
     registrar = new ethers.Contract(REGISTRAR, ABI, signer);
     connected = true;
-    const name = nameInput.value.trim().toLowerCase();
-    connectBtn.textContent = 'Register ' + name + '.arc';
+    const price = selectedYears === 1 ? '3 USDC' : '15 USDC';
+    connectBtn.textContent = 'Register ' + currentName + '.arc — ' + price;
     connectBtn.onclick = register;
     showStatus('Wallet connected: ' + (await signer.getAddress()).slice(0,6) + '...', 'ok');
   } catch(e) { showStatus('Error: ' + e.message, 'err'); }
@@ -134,10 +167,9 @@ async function connect() {
 async function register() {
   const name = nameInput.value.trim().toLowerCase();
   if (!name || name.length < 3) { showStatus('Name too short', 'err'); return; }
-  if (!/^[a-z0-9-]+$/.test(name)) { showStatus('Only lowercase letters, numbers, hyphens', 'err'); return; }
   try {
     showStatus('Getting price...', 'info');
-    const duration = 365*24*3600;
+    const duration = selectedYears * 365 * 24 * 3600;
     const price = await registrar.rentPrice(name, duration);
     showStatus('Sending transaction...', 'info');
     const tx = await registrar.register(name, await signer.getAddress(), duration, { value: price });
@@ -146,6 +178,7 @@ async function register() {
     showStatus('Registered! TX: ' + tx.hash.slice(0,10) + '...', 'ok');
     badge.className = 'badge taken';
     badge.textContent = name + '.arc — Registered!';
+    durationRow.style.display = 'none';
     connectBtn.style.display = 'none';
   } catch(e) { showStatus('Error: ' + (e.reason || e.message), 'err'); }
 }
