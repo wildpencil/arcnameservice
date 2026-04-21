@@ -155,9 +155,9 @@ async function connect() {
     const network = await provider.getNetwork();
     if (Number(network.chainId) !== ARC_CHAIN_ID) {
       try {
-        await eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x4CEB12' }] });
+        await eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x4cef52' }] });
       } catch(e) {
-        await eth.request({ method: 'wallet_addEthereumChain', params: [{ chainId: '0x4CEB12', chainName: 'Arc Testnet', rpcUrls: ['https://rpc.testnet.arc.network'], nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 }, blockExplorerUrls: ['https://testnet.arcscan.app'] }] });
+        await eth.request({ method: 'wallet_addEthereumChain', params: [{ chainId: '0x4cef52', chainName: 'Arc Testnet', rpcUrls: ['https://rpc.testnet.arc.network'], nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 }, blockExplorerUrls: ['https://testnet.arcscan.app'] }] });
       }
       provider = new ethers.BrowserProvider(eth);
     }
