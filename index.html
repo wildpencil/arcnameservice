@@ -124,6 +124,7 @@
 
 <script>
 const REGISTRAR = "0x326AEb1ce28552c27DC1046B98bB067aD6c2A327";
+const DEPLOY_BLOCK = 38256893;
 const ARC_CHAIN_ID = 5042002;
 const RPC = "https://rpc.testnet.arc.network";
 const ABI = [
@@ -268,16 +269,21 @@ async function openMyNames() {
     const readProvider = new ethers.JsonRpcProvider(RPC);
     const readRegistrar = new ethers.Contract(REGISTRAR, ABI, readProvider);
     const latest = await readProvider.getBlockNumber();
-    const fromBlock = Math.max(0, latest - 500000);
-    const filter = readRegistrar.filters.NameRegistered(null, null, myAddress);
-    const events = await readRegistrar.queryFilter(filter, fromBlock, 'latest');
-    if (events.length === 0) {
+    const allEvents = [];
+    const chunkSize = 9000;
+    for (let from = DEPLOY_BLOCK; from <= latest; from += chunkSize) {
+      const to = Math.min(from + chunkSize - 1, latest);
+      const filter = readRegistrar.filters.NameRegistered(null, null, myAddress);
+      const chunk = await readRegistrar.queryFilter(filter, from, to);
+      allEvents.push(...chunk);
+    }
+    if (allEvents.length === 0) {
       document.getElementById('namesList').innerHTML = '<div class="no-names">No .arc names found for this wallet.</div>';
       return;
     }
     let html = '';
     const now = Math.floor(Date.now() / 1000);
-    for (const e of events) {
+    for (const e of allEvents) {
       const name = e.args[0];
       const expires = Number(e.args[3]);
       const expiryDate = new Date(expires * 1000).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
