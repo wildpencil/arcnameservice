@@ -134,7 +134,7 @@
     <p class="sub">Register your name on the Arc Network</p>
     <div class="stats">
       <div class="stat-box">
-        <div class="stat-number" id="totalNames">—</div>
+        <div class="stat-number" id="totalNames">...</div>
         <div class="stat-label">.arc names registered</div>
       </div>
     </div>
@@ -200,6 +200,7 @@ const REGISTRY = "0x8216cAde5A6196b2E4257945CEd53dd9D991400b";
 const DEPLOY_BLOCK = 38256893;
 const ARC_CHAIN_ID = 5042002;
 const RPC = "https://rpc.testnet.arc.network";
+const CHUNK = 9000;
 const ABI = [
   "function rentPrice(string name, uint256 duration) view returns (uint256)",
   "function register(string name, address owner, uint256 duration) payable returns (bytes32)",
@@ -214,12 +215,10 @@ const REGISTRY_ABI = [
 ];
 
 let provider, signer, registrar, connected = false;
-let selectedYears = 1;
-let selectedRenewYears = 1;
-let currentName = '';
-let myAddress = '';
-let currentOwner = '';
-let currentNode = '';
+let selectedYears = 1, selectedRenewYears = 1;
+let currentName = '', myAddress = '', currentOwner = '', currentNode = '';
+let cachedTotal = null;
+let cachedEvents = [];
 
 const nameInput = document.getElementById('nameInput');
 const priceInfo = document.getElementById('priceInfo');
@@ -237,34 +236,42 @@ const walletAddrHeader = document.getElementById('walletAddrHeader');
 function showStatus(msg, type) { status.textContent = msg; status.className = 'status ' + type; }
 
 function getNode(name) {
-  const arcNode = ethers.keccak256(ethers.solidityPacked(['bytes32', 'bytes32'], [ethers.ZeroHash, ethers.keccak256(ethers.toUtf8Bytes('arc'))]));
-  return ethers.keccak256(ethers.solidityPacked(['bytes32', 'bytes32'], [arcNode, ethers.keccak256(ethers.toUtf8Bytes(name))]));
+  const arcNode = ethers.keccak256(ethers.solidityPacked(['bytes32','bytes32'],[ethers.ZeroHash,ethers.keccak256(ethers.toUtf8Bytes('arc'))]));
+  return ethers.keccak256(ethers.solidityPacked(['bytes32','bytes32'],[arcNode,ethers.keccak256(ethers.toUtf8Bytes(name))]));
 }
 
 function timeLeft(expires) {
-  const now = Math.floor(Date.now() / 1000);
-  const diff = expires - now;
-  if (diff <= 0) return { text: 'Expired', cls: 'red' };
-  const days = Math.floor(diff / 86400);
-  if (days > 365) return { text: Math.floor(days/365) + ' years', cls: 'green' };
-  if (days > 30) return { text: Math.floor(days/30) + ' months', cls: 'green' };
-  return { text: days + ' days', cls: days < 30 ? 'red' : 'green' };
+  const now = Math.floor(Date.now()/1000), diff = expires - now;
+  if (diff <= 0) return {text:'Expired',cls:'red'};
+  const days = Math.floor(diff/86400);
+  if (days > 365) return {text:Math.floor(days/365)+' years',cls:'green'};
+  if (days > 30) return {text:Math.floor(days/30)+' months',cls:'green'};
+  return {text:days+' days',cls:days<30?'red':'green'};
+}
+
+async function queryAllEvents(filter, registrarContract, latest) {
+  const events = [];
+  for (let from = DEPLOY_BLOCK; from <= latest; from += CHUNK) {
+    const to = Math.min(from + CHUNK - 1, latest);
+    const chunk = await registrarContract.queryFilter(filter, from, to);
+    events.push(...chunk);
+  }
+  return events;
 }
 
 async function loadStats() {
+  if (cachedTotal !== null) {
+    document.getElementById('totalNames').textContent = cachedTotal;
+    return;
+  }
   try {
-    const readProvider = new ethers.JsonRpcProvider(RPC);
-    const readRegistrar = new ethers.Contract(REGISTRAR, ABI, readProvider);
-    const latest = await readProvider.getBlockNumber();
-    let total = 0;
-    const chunkSize = 9000;
-    for (let from = DEPLOY_BLOCK; from <= latest; from += chunkSize) {
-      const to = Math.min(from + chunkSize - 1, latest);
-      const filter = readRegistrar.filters.NameRegistered();
-      const chunk = await readRegistrar.queryFilter(filter, from, to);
-      total += chunk.length;
-    }
-    document.getElementById('totalNames').textContent = total;
+    const rp = new ethers.JsonRpcProvider(RPC);
+    const rc = new ethers.Contract(REGISTRAR, ABI, rp);
+    const latest = await rp.getBlockNumber();
+    const events = await queryAllEvents(rc.filters.NameRegistered(), rc, latest);
+    cachedTotal = events.length;
+    cachedEvents = events;
+    document.getElementById('totalNames').textContent = cachedTotal;
   } catch(e) {
     document.getElementById('totalNames').textContent = '—';
   }
@@ -272,257 +279,211 @@ async function loadStats() {
 
 function updateRegisterBtn() {
   if (!badge.textContent.includes('Available')) return;
-  if (!connected) {
-    registerBtn.textContent = 'Connect Wallet to Register';
-    registerBtn.onclick = connect;
-  } else {
-    const price = selectedYears === 1 ? '3 USDC' : '15 USDC';
-    registerBtn.textContent = 'Register ' + currentName + '.arc — ' + price;
-    registerBtn.onclick = register;
-  }
+  if (!connected) { registerBtn.textContent = 'Connect Wallet to Register'; registerBtn.onclick = connect; }
+  else { registerBtn.textContent = 'Register ' + currentName + '.arc — ' + (selectedYears===1?'3':'15') + ' USDC'; registerBtn.onclick = register; }
 }
 
 function showOwnerSections() {
-  if (connected && currentOwner && myAddress.toLowerCase() === currentOwner.toLowerCase()) {
-    renewSection.className = 'owner-section show';
-  } else {
-    renewSection.className = 'owner-section';
-  }
+  renewSection.className = (connected && currentOwner && myAddress.toLowerCase()===currentOwner.toLowerCase()) ? 'owner-section show' : 'owner-section';
 }
 
 function disconnect() {
-  provider = null; signer = null; registrar = null; connected = false; myAddress = '';
-  headerConnectBtn.className = 'header-connect-btn';
-  walletInfo.className = 'wallet-info hidden';
-  myNamesBtn.className = 'my-names-btn hidden';
-  renewSection.className = 'owner-section';
+  provider=null; signer=null; registrar=null; connected=false; myAddress='';
+  headerConnectBtn.className='header-connect-btn';
+  walletInfo.className='wallet-info hidden';
+  myNamesBtn.className='my-names-btn hidden';
+  renewSection.className='owner-section';
   updateRegisterBtn();
-  showStatus('Disconnected', 'info');
+  showStatus('Disconnected','info');
 }
 
-function selectDuration(years) {
-  selectedYears = years;
-  document.getElementById('btn1').className = years === 1 ? 'duration-btn active' : 'duration-btn';
-  document.getElementById('btn5').className = years === 5 ? 'duration-btn active' : 'duration-btn';
-  priceInfo.textContent = 'Total: ' + (years === 1 ? '3 USDC' : '15 USDC');
+function selectDuration(y) {
+  selectedYears=y;
+  document.getElementById('btn1').className=y===1?'duration-btn active':'duration-btn';
+  document.getElementById('btn5').className=y===5?'duration-btn active':'duration-btn';
+  priceInfo.textContent='Total: '+(y===1?'3':'15')+' USDC';
   updateRegisterBtn();
 }
 
-function selectRenew(years) {
-  selectedRenewYears = years;
-  document.getElementById('renewBtn1').className = years === 1 ? 'renew-btn active' : 'renew-btn';
-  document.getElementById('renewBtn5').className = years === 5 ? 'renew-btn active' : 'renew-btn';
+function selectRenew(y) {
+  selectedRenewYears=y;
+  document.getElementById('renewBtn1').className=y===1?'renew-btn active':'renew-btn';
+  document.getElementById('renewBtn5').className=y===5?'renew-btn active':'renew-btn';
 }
 
 async function checkName() {
   const name = nameInput.value.trim().toLowerCase();
-  if (!name || name.length < 3) {
-    badge.style.display = 'none'; priceInfo.textContent = '';
-    durationRow.style.display = 'none'; registerBtn.style.display = 'none';
-    nameDetail.className = 'name-detail';
-    showStatus('Min 3 characters', 'err'); return;
-  }
-  if (!/^[a-z0-9-]+$/.test(name)) { showStatus('Only lowercase letters, numbers, hyphens', 'err'); return; }
-  currentName = name; currentOwner = ''; currentNode = '';
-  badge.style.display = 'block';
-  badge.className = 'badge checking';
-  badge.textContent = 'Checking ' + name + '.arc ...';
-  priceInfo.textContent = ''; durationRow.style.display = 'none';
-  registerBtn.style.display = 'none'; status.className = 'status';
-  nameDetail.className = 'name-detail';
-  renewSection.className = 'owner-section';
-
+  if (!name||name.length<3) { badge.style.display='none'; priceInfo.textContent=''; durationRow.style.display='none'; registerBtn.style.display='none'; nameDetail.className='name-detail'; showStatus('Min 3 characters','err'); return; }
+  if (!/^[a-z0-9-]+$/.test(name)) { showStatus('Only lowercase letters, numbers, hyphens','err'); return; }
+  currentName=name; currentOwner=''; currentNode='';
+  badge.style.display='block'; badge.className='badge checking'; badge.textContent='Checking '+name+'.arc ...';
+  priceInfo.textContent=''; durationRow.style.display='none'; registerBtn.style.display='none'; status.className='status';
+  nameDetail.className='name-detail'; renewSection.className='owner-section';
   try {
-    const readProvider = new ethers.JsonRpcProvider(RPC);
-    const readRegistrar = new ethers.Contract(REGISTRAR, ABI, readProvider);
-    const isAvailable = await readRegistrar.available(name);
+    const rp = new ethers.JsonRpcProvider(RPC);
+    const rc = new ethers.Contract(REGISTRAR, ABI, rp);
+    const isAvailable = await rc.available(name);
     if (isAvailable) {
-      badge.className = 'badge available';
-      badge.textContent = name + '.arc — Available';
-      durationRow.style.display = 'block';
-      selectDuration(selectedYears);
-      registerBtn.style.display = 'block';
-      updateRegisterBtn();
+      badge.className='badge available'; badge.textContent=name+'.arc — Available';
+      durationRow.style.display='block'; selectDuration(selectedYears);
+      registerBtn.style.display='block'; updateRegisterBtn();
     } else {
-      badge.className = 'badge taken';
-      badge.textContent = name + '.arc — Registered';
+      badge.className='badge taken'; badge.textContent=name+'.arc — Registered';
       try {
-        const expires = Number(await readRegistrar.expiry(name));
-        const expiryDate = new Date(expires * 1000).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+        const expires = Number(await rc.expiry(name));
+        const expiryDate = new Date(expires*1000).toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'});
         const tl = timeLeft(expires);
         currentNode = getNode(name);
-        const registry = new ethers.Contract(REGISTRY, REGISTRY_ABI, readProvider);
-        currentOwner = await registry.owner(currentNode);
-        document.getElementById('detailOwner').textContent = currentOwner.slice(0,6) + '...' + currentOwner.slice(-4);
+        const reg = new ethers.Contract(REGISTRY, REGISTRY_ABI, rp);
+        currentOwner = await reg.owner(currentNode);
+        document.getElementById('detailOwner').textContent = currentOwner.slice(0,6)+'...'+currentOwner.slice(-4);
         document.getElementById('detailExpiry').textContent = expiryDate;
         const tlEl = document.getElementById('detailTimeLeft');
-        tlEl.textContent = tl.text;
-        tlEl.className = 'detail-value ' + tl.cls;
-        nameDetail.className = 'name-detail show';
-        showOwnerSections();
-      } catch(e) { nameDetail.className = 'name-detail'; }
+        tlEl.textContent=tl.text; tlEl.className='detail-value '+tl.cls;
+        nameDetail.className='name-detail show'; showOwnerSections();
+      } catch(e) { nameDetail.className='name-detail'; }
     }
-  } catch(e) {
-    badge.className = 'badge checking';
-    badge.textContent = 'Error checking name';
-    showStatus('Error: ' + e.message, 'err');
-  }
+  } catch(e) { badge.className='badge checking'; badge.textContent='Error checking name'; showStatus('Error: '+e.message,'err'); }
 }
 
-nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') checkName(); });
+nameInput.addEventListener('keydown',(e)=>{if(e.key==='Enter')checkName();});
 
 async function connect() {
-  const eth = window.ethereum || window.rabby;
-  if (!eth) { showStatus('No wallet found! Install MetaMask or Rabby', 'err'); return; }
+  const eth = window.ethereum||window.rabby;
+  if (!eth) { showStatus('No wallet found!','err'); return; }
   try {
     provider = new ethers.BrowserProvider(eth);
-    const accounts = await eth.request({ method: 'eth_requestAccounts' });
-    if (!accounts || accounts.length === 0) { showStatus('No accounts found!', 'err'); return; }
+    const accounts = await eth.request({method:'eth_requestAccounts'});
+    if (!accounts||accounts.length===0) { showStatus('No accounts found!','err'); return; }
     const network = await provider.getNetwork();
-    if (Number(network.chainId) !== ARC_CHAIN_ID) {
-      try {
-        await eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x4cef52' }] });
-      } catch(e) {
-        await eth.request({ method: 'wallet_addEthereumChain', params: [{ chainId: '0x4cef52', chainName: 'Arc Testnet', rpcUrls: ['https://rpc.testnet.arc.network'], nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 }, blockExplorerUrls: ['https://testnet.arcscan.app'] }] });
-      }
+    if (Number(network.chainId)!==ARC_CHAIN_ID) {
+      try { await eth.request({method:'wallet_switchEthereumChain',params:[{chainId:'0x4cef52'}]}); }
+      catch(e) { await eth.request({method:'wallet_addEthereumChain',params:[{chainId:'0x4cef52',chainName:'Arc Testnet',rpcUrls:['https://rpc.testnet.arc.network'],nativeCurrency:{name:'USDC',symbol:'USDC',decimals:18},blockExplorerUrls:['https://testnet.arcscan.app']}]}); }
       provider = new ethers.BrowserProvider(eth);
     }
     signer = await provider.getSigner();
     registrar = new ethers.Contract(REGISTRAR, ABI, signer);
-    connected = true;
-    myAddress = await signer.getAddress();
-    walletAddrHeader.textContent = myAddress.slice(0,6) + '...' + myAddress.slice(-4);
-    headerConnectBtn.className = 'header-connect-btn hidden';
-    walletInfo.className = 'wallet-info';
-    myNamesBtn.className = 'my-names-btn';
-    updateRegisterBtn();
-    showOwnerSections();
-    showStatus('Wallet connected!', 'ok');
-    eth.on('accountsChanged', (accounts) => {
-      if (accounts.length === 0) disconnect();
-      else { myAddress = accounts[0]; walletAddrHeader.textContent = accounts[0].slice(0,6) + '...' + accounts[0].slice(-4); showOwnerSections(); }
+    connected=true; myAddress=await signer.getAddress();
+    walletAddrHeader.textContent=myAddress.slice(0,6)+'...'+myAddress.slice(-4);
+    headerConnectBtn.className='header-connect-btn hidden';
+    walletInfo.className='wallet-info';
+    myNamesBtn.className='my-names-btn';
+    updateRegisterBtn(); showOwnerSections();
+    showStatus('Wallet connected!','ok');
+    eth.on('accountsChanged',(accounts)=>{
+      if(accounts.length===0) disconnect();
+      else { myAddress=accounts[0]; walletAddrHeader.textContent=accounts[0].slice(0,6)+'...'+accounts[0].slice(-4); showOwnerSections(); }
     });
-  } catch(e) { showStatus('Error: ' + e.message, 'err'); }
+  } catch(e) { showStatus('Error: '+e.message,'err'); }
 }
 
 async function register() {
   if (!connected) { connect(); return; }
   const name = nameInput.value.trim().toLowerCase();
   try {
-    showStatus('Getting price...', 'info');
-    const duration = selectedYears * 365 * 24 * 3600;
+    showStatus('Getting price...','info');
+    const duration = selectedYears*365*24*3600;
     const price = await registrar.rentPrice(name, duration);
-    showStatus('Sending transaction...', 'info');
-    const tx = await registrar.register(name, await signer.getAddress(), duration, { value: price });
-    showStatus('Waiting for confirmation...', 'info');
+    showStatus('Sending transaction...','info');
+    const tx = await registrar.register(name, await signer.getAddress(), duration, {value:price});
+    showStatus('Waiting for confirmation...','info');
     await tx.wait();
-    showStatus('Registered! TX: ' + tx.hash.slice(0,10) + '...', 'ok');
-    loadStats();
-    checkName();
-  } catch(e) { showStatus('Error: ' + (e.reason || e.message), 'err'); }
+    showStatus('Registered! TX: '+tx.hash.slice(0,10)+'...','ok');
+    cachedTotal = null; cachedEvents = [];
+    loadStats(); checkName();
+  } catch(e) { showStatus('Error: '+(e.reason||e.message),'err'); }
 }
 
 async function renew() {
   if (!connected) { connect(); return; }
   try {
-    showStatus('Getting price...', 'info');
-    const duration = selectedRenewYears * 365 * 24 * 3600;
+    showStatus('Getting price...','info');
+    const duration = selectedRenewYears*365*24*3600;
     const price = await registrar.rentPrice(currentName, duration);
-    showStatus('Sending transaction...', 'info');
-    const tx = await registrar.renew(currentName, duration, { value: price });
-    showStatus('Waiting for confirmation...', 'info');
+    showStatus('Sending transaction...','info');
+    const tx = await registrar.renew(currentName, duration, {value:price});
+    showStatus('Waiting for confirmation...','info');
     await tx.wait();
-    showStatus('Renewed! TX: ' + tx.hash.slice(0,10) + '...', 'ok');
+    showStatus('Renewed! TX: '+tx.hash.slice(0,10)+'...','ok');
     checkName();
-  } catch(e) { showStatus('Error: ' + (e.reason || e.message), 'err'); }
+  } catch(e) { showStatus('Error: '+(e.reason||e.message),'err'); }
 }
 
-function toggleSendForm(id) {
-  const form = document.getElementById('sendForm_' + id);
+function toggleSendForm(name) {
+  const form = document.getElementById('sendForm_'+name);
   form.className = form.className.includes('show') ? 'send-form' : 'send-form show';
 }
 
 async function sendName(name) {
   const node = getNode(name);
-  const toAddr = document.getElementById('sendInput_' + name).value.trim();
-  const sendStatus = document.getElementById('sendStatus_' + name);
-  if (!toAddr || !ethers.isAddress(toAddr)) {
-    sendStatus.textContent = 'Invalid address';
-    sendStatus.className = 'send-status err'; return;
-  }
-  if (toAddr.toLowerCase() === myAddress.toLowerCase()) {
-    sendStatus.textContent = 'Cannot send to yourself';
-    sendStatus.className = 'send-status err'; return;
-  }
+  const toAddr = document.getElementById('sendInput_'+name).value.trim();
+  const ss = document.getElementById('sendStatus_'+name);
+  if (!toAddr||!ethers.isAddress(toAddr)) { ss.textContent='Invalid address'; ss.className='send-status err'; return; }
+  if (toAddr.toLowerCase()===myAddress.toLowerCase()) { ss.textContent='Cannot send to yourself'; ss.className='send-status err'; return; }
   try {
-    sendStatus.textContent = 'Sending...';
-    sendStatus.className = 'send-status info';
-    const registry = new ethers.Contract(REGISTRY, REGISTRY_ABI, signer);
-    const tx = await registry.setOwner(node, toAddr);
-    sendStatus.textContent = 'Waiting...';
+    ss.textContent='Sending...'; ss.className='send-status info';
+    const reg = new ethers.Contract(REGISTRY, REGISTRY_ABI, signer);
+    const tx = await reg.setOwner(node, toAddr);
+    ss.textContent='Waiting...';
     await tx.wait();
-    sendStatus.textContent = 'Sent! TX: ' + tx.hash.slice(0,10) + '...';
-    sendStatus.className = 'send-status ok';
-    document.getElementById('sendInput_' + name).value = '';
-    setTimeout(() => openMyNames(), 2000);
-  } catch(e) {
-    sendStatus.textContent = 'Error: ' + (e.reason || e.message);
-    sendStatus.className = 'send-status err';
-  }
+    ss.textContent='Sent! TX: '+tx.hash.slice(0,10)+'...';
+    ss.className='send-status ok';
+    document.getElementById('sendInput_'+name).value='';
+    setTimeout(()=>openMyNames(), 2000);
+  } catch(e) { ss.textContent='Error: '+(e.reason||e.message); ss.className='send-status err'; }
 }
 
 async function openMyNames() {
-  document.getElementById('modalOverlay').className = 'modal-overlay show';
-  document.getElementById('namesList').innerHTML = '<div class="loading-names">Loading your names...</div>';
+  document.getElementById('modalOverlay').className='modal-overlay show';
+  document.getElementById('namesList').innerHTML='<div class="loading-names">Loading your names...</div>';
   try {
-    const readProvider = new ethers.JsonRpcProvider(RPC);
-    const readRegistrar = new ethers.Contract(REGISTRAR, ABI, readProvider);
-    const latest = await readProvider.getBlockNumber();
-    const allEvents = [];
-    const chunkSize = 9000;
-    for (let from = DEPLOY_BLOCK; from <= latest; from += chunkSize) {
-      const to = Math.min(from + chunkSize - 1, latest);
-      const filter = readRegistrar.filters.NameRegistered(null, null, myAddress);
-      const chunk = await readRegistrar.queryFilter(filter, from, to);
-      allEvents.push(...chunk);
-    }
+    const rp = new ethers.JsonRpcProvider(RPC);
+    const rc = new ethers.Contract(REGISTRAR, ABI, rp);
+    const latest = await rp.getBlockNumber();
+
+    // Cache'deki eventleri kullan, yoksa yükle
+    let allEvents = cachedEvents;
     if (allEvents.length === 0) {
-      document.getElementById('namesList').innerHTML = '<div class="no-names">No .arc names found for this wallet.</div>';
+      allEvents = await queryAllEvents(rc.filters.NameRegistered(), rc, latest);
+      cachedEvents = allEvents;
+      cachedTotal = allEvents.length;
+      document.getElementById('totalNames').textContent = cachedTotal;
+    }
+
+    const myEvents = allEvents.filter(e => e.args[2].toLowerCase() === myAddress.toLowerCase());
+
+    if (myEvents.length===0) {
+      document.getElementById('namesList').innerHTML='<div class="no-names">No .arc names found for this wallet.</div>';
       return;
     }
-    let html = '';
-    const now = Math.floor(Date.now() / 1000);
-    for (const e of allEvents) {
-      const name = e.args[0];
-      const expires = Number(e.args[3]);
-      const expiryDate = new Date(expires * 1000).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-      const tl = timeLeft(expires);
-      html += '<div class="name-item">';
-      html += '<div class="name">' + name + '<span>.arc</span></div>';
-      html += '<div class="expiry">Expires: ' + expiryDate + ' · <span style="color:' + (tl.cls === 'green' ? '#10b981' : '#ef4444') + '">' + tl.text + '</span></div>';
-      html += '<div class="name-item-actions">';
-      html += '<button class="send-btn" onclick="toggleSendForm(\'' + name + '\')">Send →</button>';
-      html += '</div>';
-      html += '<div class="send-form" id="sendForm_' + name + '">';
-      html += '<input class="send-input" id="sendInput_' + name + '" placeholder="0x... recipient address" />';
-      html += '<button class="send-confirm" onclick="sendName(\'' + name + '\')">Confirm Send</button>';
-      html += '<div class="send-status" id="sendStatus_' + name + '"></div>';
-      html += '</div>';
-      html += '</div>';
+    let html='';
+    const now=Math.floor(Date.now()/1000);
+    for (const e of myEvents) {
+      const name=e.args[0], expires=Number(e.args[3]);
+      const expiryDate=new Date(expires*1000).toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'});
+      const tl=timeLeft(expires);
+      html+='<div class="name-item">';
+      html+='<div class="name">'+name+'<span>.arc</span></div>';
+      html+='<div class="expiry">Expires: '+expiryDate+' · <span style="color:'+(tl.cls==='green'?'#10b981':'#ef4444')+'">'+tl.text+'</span></div>';
+      html+='<div class="name-item-actions"><button class="send-btn" onclick="toggleSendForm(\''+name+'\')">Send →</button></div>';
+      html+='<div class="send-form" id="sendForm_'+name+'">';
+      html+='<input class="send-input" id="sendInput_'+name+'" placeholder="0x... recipient address" />';
+      html+='<button class="send-confirm" onclick="sendName(\''+name+'\')">Confirm Send</button>';
+      html+='<div class="send-status" id="sendStatus_'+name+'"></div>';
+      html+='</div></div>';
     }
-    document.getElementById('namesList').innerHTML = html;
+    document.getElementById('namesList').innerHTML=html;
   } catch(e) {
-    document.getElementById('namesList').innerHTML = '<div class="no-names">Error: ' + e.message + '</div>';
+    document.getElementById('namesList').innerHTML='<div class="no-names">Error: '+e.message+'</div>';
   }
 }
 
 function closeMyNames(event) {
-  if (!event || event.target === document.getElementById('modalOverlay')) {
-    document.getElementById('modalOverlay').className = 'modal-overlay';
+  if (!event||event.target===document.getElementById('modalOverlay')) {
+    document.getElementById('modalOverlay').className='modal-overlay';
   }
 }
 
-// Sayfa yüklenince stats yükle
 loadStats();
 </script>
 </body>
