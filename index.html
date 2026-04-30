@@ -50,8 +50,6 @@
     .status.ok { background: #0a2a1a; border: 1px solid #10b981; color: #10b981; display: block; }
     .status.err { background: #2a0a0a; border: 1px solid #ef4444; color: #ef4444; display: block; }
     .status.info { background: #1e1a3a; border: 1px solid #7c3aed; color: #a78bfa; display: block; }
-
-    /* NAME DETAIL */
     .name-detail { margin-top: 16px; padding: 16px; background: #0d0b1a; border: 1px solid #2d2060; border-radius: 10px; display: none; }
     .name-detail.show { display: block; }
     .detail-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #1e1a3a; font-size: 0.9rem; }
@@ -61,8 +59,15 @@
     .detail-value.purple { color: #a78bfa; }
     .detail-value.green { color: #10b981; }
     .detail-value.red { color: #ef4444; }
-
-    /* MODAL */
+    .renew-section { margin-top: 12px; padding-top: 12px; border-top: 1px solid #1e1a3a; display: none; }
+    .renew-section.show { display: block; }
+    .renew-title { color: #6b7280; font-size: 0.85rem; margin-bottom: 8px; }
+    .renew-row { display: flex; gap: 8px; margin-bottom: 8px; }
+    .renew-btn { flex: 1; padding: 10px; background: #0d0b1a; border: 1px solid #2d2060; border-radius: 8px; color: #6b7280; font-size: 0.85rem; cursor: pointer; font-family: inherit; }
+    .renew-btn:hover { transform: none; box-shadow: none; }
+    .renew-btn.active { border-color: #7c3aed; color: #a78bfa; background: #1e1a3a; }
+    .renew-submit { width: 100%; padding: 12px; background: linear-gradient(135deg, #7c3aed, #6d28d9); color: #fff; border: none; border-radius: 8px; font-size: 0.9rem; font-weight: 700; cursor: pointer; font-family: inherit; }
+    .renew-submit:hover { background: linear-gradient(135deg, #6d28d9, #5b21b6); transform: none; box-shadow: none; }
     .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 100; align-items: center; justify-content: center; }
     .modal-overlay.show { display: flex; }
     .modal { background: #13103a; border: 1px solid #2d2060; border-radius: 16px; padding: 32px; width: 100%; max-width: 480px; max-height: 80vh; overflow-y: auto; position: relative; }
@@ -75,7 +80,6 @@
     .name-item .expiry { font-size: 0.78rem; color: #6b7280; margin-top: 4px; }
     .loading-names { text-align: center; color: #6b7280; padding: 24px; }
     .no-names { text-align: center; color: #6b7280; padding: 24px; }
-
     footer { text-align: center; padding: 24px; color: #4b5563; font-size: 0.85rem; border-top: 1px solid #1e1a3a; }
     footer a { color: #7c3aed; text-decoration: none; }
     footer a:hover { color: #a78bfa; }
@@ -128,6 +132,14 @@
           <span class="detail-label">Time Left</span>
           <span class="detail-value" id="detailTimeLeft">—</span>
         </div>
+        <div class="renew-section" id="renewSection">
+          <div class="renew-title">Renew this name</div>
+          <div class="renew-row">
+            <button class="renew-btn active" id="renewBtn1" onclick="selectRenew(1)">+1 Year — 3 USDC</button>
+            <button class="renew-btn" id="renewBtn5" onclick="selectRenew(5)">+5 Years — 15 USDC</button>
+          </div>
+          <button class="renew-submit" onclick="renew()">Renew</button>
+        </div>
       </div>
       <div id="durationRow" style="display:none; margin-top:16px;">
         <div class="duration-row">
@@ -166,18 +178,19 @@ const RPC = "https://rpc.testnet.arc.network";
 const ABI = [
   "function rentPrice(string name, uint256 duration) view returns (uint256)",
   "function register(string name, address owner, uint256 duration) payable returns (bytes32)",
+  "function renew(string name, uint256 duration) payable returns (uint256)",
   "function available(string name) view returns (bool)",
   "function expiry(string name) view returns (uint256)",
   "event NameRegistered(string name, bytes32 indexed node, address indexed owner, uint256 expires)"
 ];
-const REGISTRY_ABI = [
-  "function owner(bytes32 node) view returns (address)"
-];
+const REGISTRY_ABI = ["function owner(bytes32 node) view returns (address)"];
 
 let provider, signer, registrar, connected = false;
 let selectedYears = 1;
+let selectedRenewYears = 1;
 let currentName = '';
 let myAddress = '';
+let currentOwner = '';
 
 const nameInput = document.getElementById('nameInput');
 const priceInfo = document.getElementById('priceInfo');
@@ -186,6 +199,7 @@ const status = document.getElementById('status');
 const badge = document.getElementById('badge');
 const durationRow = document.getElementById('durationRow');
 const nameDetail = document.getElementById('nameDetail');
+const renewSection = document.getElementById('renewSection');
 const myNamesBtn = document.getElementById('myNamesBtn');
 const headerConnectBtn = document.getElementById('headerConnectBtn');
 const walletInfo = document.getElementById('walletInfo');
@@ -210,6 +224,7 @@ function disconnect() {
   headerConnectBtn.className = 'header-connect-btn';
   walletInfo.className = 'wallet-info hidden';
   myNamesBtn.className = 'my-names-btn hidden';
+  renewSection.className = 'renew-section';
   updateRegisterBtn();
   showStatus('Disconnected', 'info');
 }
@@ -221,6 +236,12 @@ function selectDuration(years) {
   const price = years === 1 ? '3 USDC' : '15 USDC';
   priceInfo.textContent = 'Total: ' + price;
   updateRegisterBtn();
+}
+
+function selectRenew(years) {
+  selectedRenewYears = years;
+  document.getElementById('renewBtn1').className = years === 1 ? 'renew-btn active' : 'renew-btn';
+  document.getElementById('renewBtn5').className = years === 5 ? 'renew-btn active' : 'renew-btn';
 }
 
 function timeLeft(expires) {
@@ -249,6 +270,7 @@ async function checkName() {
   priceInfo.textContent = ''; durationRow.style.display = 'none';
   registerBtn.style.display = 'none'; status.className = 'status';
   nameDetail.className = 'name-detail';
+  renewSection.className = 'renew-section';
 
   try {
     const readProvider = new ethers.JsonRpcProvider(RPC);
@@ -265,30 +287,30 @@ async function checkName() {
     } else {
       badge.className = 'badge taken';
       badge.textContent = name + '.arc — Registered';
-      priceInfo.textContent = ''; durationRow.style.display = 'none'; registerBtn.style.display = 'none';
-
-      // Detay bilgileri çek
       try {
         const expires = Number(await readRegistrar.expiry(name));
         const expiryDate = new Date(expires * 1000).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
         const tl = timeLeft(expires);
-
-        // Registry'den owner çek
         const node = ethers.keccak256(ethers.solidityPacked(
           ['bytes32', 'bytes32'],
-          [ethers.keccak256(ethers.solidityPacked(['bytes32', 'bytes32'], [ethers.ZeroHash, ethers.keccak256(ethers.toUtf8Bytes('arc'))])),
+          [ethers.keccak256(ethers.solidityPacked(['bytes32', 'bytes32'],
+            [ethers.ZeroHash, ethers.keccak256(ethers.toUtf8Bytes('arc'))])),
            ethers.keccak256(ethers.toUtf8Bytes(name))]
         ));
         const registry = new ethers.Contract(REGISTRY, REGISTRY_ABI, readProvider);
-        const ownerAddr = await registry.owner(node);
-        const ownerShort = ownerAddr.slice(0,6) + '...' + ownerAddr.slice(-4);
-
+        currentOwner = await registry.owner(node);
+        const ownerShort = currentOwner.slice(0,6) + '...' + currentOwner.slice(-4);
         document.getElementById('detailOwner').textContent = ownerShort;
         document.getElementById('detailExpiry').textContent = expiryDate;
         const tlEl = document.getElementById('detailTimeLeft');
         tlEl.textContent = tl.text;
         tlEl.className = 'detail-value ' + tl.cls;
         nameDetail.className = 'name-detail show';
+
+        // Eğer bağlı cüzdan owner ise Renew göster
+        if (connected && myAddress.toLowerCase() === currentOwner.toLowerCase()) {
+          renewSection.className = 'renew-section show';
+        }
       } catch(e) {
         nameDetail.className = 'name-detail';
       }
@@ -327,6 +349,10 @@ async function connect() {
     walletInfo.className = 'wallet-info';
     myNamesBtn.className = 'my-names-btn';
     updateRegisterBtn();
+    // Eğer isim detayı açıksa ve owner ise renew göster
+    if (nameDetail.className.includes('show') && currentOwner && myAddress.toLowerCase() === currentOwner.toLowerCase()) {
+      renewSection.className = 'renew-section show';
+    }
     showStatus('Wallet connected!', 'ok');
     eth.on('accountsChanged', (accounts) => {
       if (accounts.length === 0) disconnect();
@@ -348,10 +374,21 @@ async function register() {
     showStatus('Waiting for confirmation...', 'info');
     await tx.wait();
     showStatus('Registered! TX: ' + tx.hash.slice(0,10) + '...', 'ok');
-    badge.className = 'badge taken';
-    badge.textContent = name + '.arc — Registered!';
-    durationRow.style.display = 'none';
-    registerBtn.style.display = 'none';
+    checkName();
+  } catch(e) { showStatus('Error: ' + (e.reason || e.message), 'err'); }
+}
+
+async function renew() {
+  if (!connected) { connect(); return; }
+  try {
+    showStatus('Getting price...', 'info');
+    const duration = selectedRenewYears * 365 * 24 * 3600;
+    const price = await registrar.rentPrice(currentName, duration);
+    showStatus('Sending transaction...', 'info');
+    const tx = await registrar.renew(currentName, duration, { value: price });
+    showStatus('Waiting for confirmation...', 'info');
+    await tx.wait();
+    showStatus('Renewed! TX: ' + tx.hash.slice(0,10) + '...', 'ok');
     checkName();
   } catch(e) { showStatus('Error: ' + (e.reason || e.message), 'err'); }
 }
@@ -381,11 +418,10 @@ async function openMyNames() {
       const name = e.args[0];
       const expires = Number(e.args[3]);
       const expiryDate = new Date(expires * 1000).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-      const expired = expires < now;
       const tl = timeLeft(expires);
       html += '<div class="name-item"><div>';
       html += '<div class="name">' + name + '<span>.arc</span></div>';
-      html += '<div class="expiry">' + (expired ? 'Expired: ' : 'Expires: ') + expiryDate + ' · <span style="color:' + (tl.cls === 'green' ? '#10b981' : '#ef4444') + '">' + tl.text + '</span></div>';
+      html += '<div class="expiry">Expires: ' + expiryDate + ' · <span style="color:' + (tl.cls === 'green' ? '#10b981' : '#ef4444') + '">' + tl.text + '</span></div>';
       html += '</div></div>';
     }
     document.getElementById('namesList').innerHTML = html;
